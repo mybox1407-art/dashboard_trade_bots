@@ -55,7 +55,7 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
     body{min-height:100dvh;background:var(--color-bg);color:var(--color-text);font:400 var(--text-base)/1.55 var(--font-body)}
-    button, select{font:inherit}
+    button, select, input{font:inherit}
     button{border:none;background:none;color:inherit;cursor:pointer}
     select{border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);border-radius:999px;min-height:44px;padding:0 14px}
     table{border-collapse:collapse;width:100%}
@@ -110,7 +110,7 @@
       .app{padding:var(--space-4)}
       .topbar,.card-header,.card-actions{align-items:flex-start;flex-direction:column}
       .toolbar,.card-actions,.pager{width:100%}
-      .ghost-btn,.primary-btn,.secondary-btn,.danger-btn,.equal-btn,.page-btn,select{width:100%}
+      .ghost-btn,.primary-btn,.secondary-btn,.danger-btn,.equal-btn,.page-btn,select,input{width:100%}
       .pager-info{text-align:left}
       .mobile-note{display:block}
     }
@@ -219,10 +219,12 @@
           <h2 id="trade-log-title" class="card-title">История торговли</h2>
         </div>
         <div class="card-actions">
-          <button class="primary-btn equal-btn" id="refreshTradesBtn">Обновить</button>
+          <button class="primary-btn equal-btn" id="refreshTradesBtn">Crypto Imp</button>
+
           <select id="tradePairFilter">
             <option value="all">Пара = Все</option>
           </select>
+
           <select id="tradePeriodFilter">
             <option value="all">Период = Все</option>
             <option value="day">За день</option>
@@ -230,8 +232,26 @@
             <option value="2weeks">За 2 недели</option>
             <option value="month">За месяц</option>
           </select>
-          <input type="text" id="currentPositionPrice" class="ghost-btn equal-btn readonly-field" value="-" readonly aria-label="Текущая цена открытой позиции" />
+
+          <input
+            type="text"
+            id="currentPositionPrice"
+            class="ghost-btn equal-btn readonly-field"
+            value="-"
+            readonly
+            aria-label="Текущая цена открытой позиции Crypto Imp"
+          />
           <button class="primary-btn equal-btn" id="refreshPositionPriceBtn">Обновить</button>
+
+          <input
+            type="text"
+            id="moexPositionPrice"
+            class="ghost-btn equal-btn readonly-field"
+            value="-"
+            readonly
+            aria-label="Текущая цена открытой позиции Moex"
+          />
+          <button class="primary-btn equal-btn" id="refreshMoexPositionPriceBtn">Moex</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -279,6 +299,8 @@
       const tradePeriodFilter = document.getElementById('tradePeriodFilter');
       const currentPositionPriceInput = document.getElementById('currentPositionPrice');
       const refreshPositionPriceBtn = document.getElementById('refreshPositionPriceBtn');
+      const moexPositionPriceInput = document.getElementById('moexPositionPrice');
+      const refreshMoexPositionPriceBtn = document.getElementById('refreshMoexPositionPriceBtn');
 
       let theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       let botsState = [];
@@ -468,6 +490,34 @@
         }
       }
 
+      async function loadMoexPositionPrice() {
+        moexPositionPriceInput.value = 'Загрузка...';
+        try {
+          const res = await fetch('http://trade_bot_tbank:3011/position/check-close', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          const json = await res.json();
+          const items = normalizeResponse(json);
+          const item = items[0] || {};
+
+          moexPositionPriceInput.value =
+            item.currentPrice != null
+              ? formatNumber(item.currentPrice, 8)
+              : item.price != null
+                ? formatNumber(item.price, 8)
+                : item.close_price != null
+                  ? formatNumber(item.close_price, 8)
+                  : '-';
+        } catch (error) {
+          console.error('loadMoexPositionPrice error:', error);
+          moexPositionPriceInput.value = 'Ошибка';
+        }
+      }
+
       function selectBot(botId) {
         currentBotId = botId;
         currentPage = 1;
@@ -476,6 +526,7 @@
         loadSignals(botId);
         loadPositions(botId);
         loadPositionPrice();
+        loadMoexPositionPrice();
       }
 
       async function loadBots() {
@@ -545,6 +596,7 @@
       refreshSignalsBtn.addEventListener('click', () => loadSignals(currentBotId));
       refreshTradesBtn.addEventListener('click', () => loadPositions(currentBotId));
       refreshPositionPriceBtn.addEventListener('click', () => loadPositionPrice());
+      refreshMoexPositionPriceBtn.addEventListener('click', () => loadMoexPositionPrice());
 
       signalFilter.addEventListener('change', () => { signalFilterValue = signalFilter.value; currentPage = 1; renderSignalsTable(); });
       pairFilter.addEventListener('change', () => { pairFilterValue = pairFilter.value; currentPage = 1; renderSignalsTable(); });
