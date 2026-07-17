@@ -147,7 +147,7 @@
               <tr>
                 <th>Название</th>
                 <th>Дата запуска</th>
-                <th>Пара</th>
+                <th>Позиция</th>
                 <th>Биржа</th>
                 <th>Статус</th>
               </tr>
@@ -380,6 +380,7 @@
       }
 
       function getPageCount(data) { return Math.max(1, Math.ceil(data.length / pageSize)); }
+
       function tradeRowClass(p) {
         const pnl = Number(p.realized_pnl);
         if (Number.isNaN(pnl)) return '';
@@ -388,15 +389,38 @@
         return '';
       }
 
+      // Проверяем, есть ли у конкретного бота открытая позиция
+      function hasOpenPositionForBot(botId) {
+        return positionsState.some((position) => {
+          const positionBotId = position.id_bot ?? position.bot_id ?? position.idBot ?? null;
+
+          const isSameBot = String(positionBotId) === String(botId);
+
+          const isOpenByClosedAt = !position.closed_at;
+          const isOpenByStatus = String(position.status ?? '').toLowerCase() !== 'closed';
+
+          return isSameBot && isOpenByClosedAt && isOpenByStatus;
+        });
+      }
+
+      // Рендер таблицы ботов
       function renderBotsTable() {
-        if (!botsState.length) { botsTableBody.innerHTML = `<tr><td colspan="5">Боты не найдены</td></tr>`; return; }
+        if (!botsState.length) {
+          botsTableBody.innerHTML = `<tr><td colspan="5">Боты не найдены</td></tr>`;
+          return;
+        }
+
         botsTableBody.innerHTML = botsState.map((bot) => {
           const active = String(bot.id_bot) === String(currentBotId);
+
+          // Если у выбранного бота есть открытая позиция, показываем "Да", иначе "Нет"
+          const hasOpenPosition = hasOpenPositionForBot(bot.id_bot);
+
           return `
             <tr data-bot-id="${bot.id_bot}" class="${active ? 'active' : ''}">
               <td><strong>${bot.name_bot ?? '-'}</strong></td>
               <td>${formatDate(bot.date_start)}</td>
-              <td>${bot.couple ?? '-'}</td>
+              <td>${hasOpenPosition ? 'Да' : 'Нет'}</td>
               <td>${bot.market ?? '-'}</td>
               <td><span class="status ${statusClass(bot.status)}">${statusLabel(bot.status)}</span></td>
             </tr>
@@ -414,14 +438,17 @@
         pagerInfo.textContent = `Стр. ${currentPage} из ${pageCount} • ${filtered.length} записей`;
         prevPageBtn.disabled = currentPage <= 1;
         nextPageBtn.disabled = currentPage >= pageCount;
+
         if (!pageItems.length) {
           workLogBody.innerHTML = `<tr><td colspan="12">Сигналы не найдены</td></tr>`;
           return;
         }
+
         workLogBody.innerHTML = pageItems.map((signal) => {
           const hasSignal = Boolean(signal.buy) || Boolean(signal.sell);
           const rowClass = hasSignal ? 'row-signal-true' : 'row-signal-false';
           const pair = getPairValue(signal) || '-';
+
           return `
             <tr class="${rowClass}">
               <td>${formatDate(signal.created_at)}</td>
@@ -443,9 +470,15 @@
 
       function renderTradesTable() {
         const filtered = getFilteredTrades();
-        if (!filtered.length) { tradeLogBody.innerHTML = `<tr><td colspan="15">Сделки не найдены</td></tr>`; return; }
+
+        if (!filtered.length) {
+          tradeLogBody.innerHTML = `<tr><td colspan="15">Сделки не найдены</td></tr>`;
+          return;
+        }
+
         tradeLogBody.innerHTML = filtered.map((p) => {
           const closedAt = p.closed_at ? formatDate(p.closed_at) : '-';
+
           return `
             <tr class="${tradeRowClass(p)}">
               <td>${formatDate(p.opened_at)}</td>
@@ -465,7 +498,13 @@
         }).join('');
       }
 
-      function renderBotDetails(bot) { if (!bot) { tradeLogBody.innerHTML = `<tr><td colspan="15">Нет данных.</td></tr>`; return; } renderTradesTable(); }
+      function renderBotDetails(bot) {
+        if (!bot) {
+          tradeLogBody.innerHTML = `<tr><td colspan="15">Нет данных.</td></tr>`;
+          return;
+        }
+        renderTradesTable();
+      }
 
       async function loadPositionPrice() {
         currentPositionPriceInput.value = 'Загрузка...';
@@ -474,11 +513,14 @@
             method: 'GET',
             headers: { 'Accept': 'application/json' }
           });
+
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
           const json = await res.json();
           const items = normalizeResponse(json);
           const item = items[0] || {};
           const action = String(item.action || '').toLowerCase();
+
           if (action === 'hold') {
             currentPositionPriceInput.value = item.currentPrice != null ? formatNumber(item.currentPrice, 8) : '-';
           } else {
@@ -521,7 +563,11 @@
       function selectBot(botId) {
         currentBotId = botId;
         currentPage = 1;
+
+        // Сначала подсвечиваем выбранного бота
         renderBotsTable();
+
+        // Обновляем зависимые блоки
         renderBotDetails(botsState.find((b) => String(b.id_bot) === String(botId)));
         loadSignals(botId);
         loadPositions(botId);
@@ -532,11 +578,21 @@
       async function loadBots() {
         botsTableBody.innerHTML = `<tr><td colspan="5">Загрузка...</td></tr>`;
         try {
-          const res = await fetch('https://n8n.kino-test.ru/webhook/get_bots', { method: 'POST', headers: { 'Accept': 'application/json' } });
+          const res = await fetch('https://n8n.kino-test.ru/webhook/get_bots', {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' }
+          });
+
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
           const json = await res.json();
           botsState = normalizeResponse(json);
-          if (!botsState.length) { botsTableBody.innerHTML = `<tr><td colspan="5">Боты не найдены</td></tr>`; return; }
+
+          if (!botsState.length) {
+            botsTableBody.innerHTML = `<tr><td colspan="5">Боты не найдены</td></tr>`;
+            return;
+          }
+
           selectBot(botsState[0].id_bot);
         } catch (error) {
           console.error('loadBots error:', error);
@@ -545,17 +601,25 @@
       }
 
       async function loadSignals(botId = currentBotId) {
-        if (!botId) { workLogBody.innerHTML = `<tr><td colspan="12">Бот не выбран</td></tr>`; return; }
+        if (!botId) {
+          workLogBody.innerHTML = `<tr><td colspan="12">Бот не выбран</td></tr>`;
+          return;
+        }
+
         workLogBody.innerHTML = `<tr><td colspan="12">Загрузка...</td></tr>`;
+
         try {
           const res = await fetch('https://n8n.kino-test.ru/webhook/get_signals', {
             method: 'POST',
             headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
             body: JSON.stringify({ id_bot: Number(botId) })
           });
+
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
           const json = await res.json();
           signalsState = normalizeResponse(json);
+
           syncPairFilterOptions();
           currentPage = 1;
           renderSignalsTable();
@@ -566,19 +630,31 @@
       }
 
       async function loadPositions(botId = currentBotId) {
-        if (!botId) { tradeLogBody.innerHTML = `<tr><td colspan="15">Бот не выбран</td></tr>`; return; }
+        if (!botId) {
+          tradeLogBody.innerHTML = `<tr><td colspan="15">Бот не выбран</td></tr>`;
+          return;
+        }
+
         tradeLogBody.innerHTML = `<tr><td colspan="15">Загрузка...</td></tr>`;
+
         try {
           const res = await fetch('https://n8n.kino-test.ru/webhook/get_positions', {
             method: 'POST',
             headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
             body: JSON.stringify({ id_bot: Number(botId) })
           });
+
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
           const json = await res.json();
           positionsState = normalizeResponse(json);
+
           syncTradePairFilterOptions();
           renderTradesTable();
+
+          // После загрузки позиций заново рисуем таблицу ботов,
+          // чтобы колонка "Позиция" обновилась
+          renderBotsTable();
         } catch (error) {
           console.error('loadPositions error:', error);
           tradeLogBody.innerHTML = `<tr><td colspan="15">Ошибка загрузки торговли</td></tr>`;
@@ -598,11 +674,33 @@
       refreshPositionPriceBtn.addEventListener('click', () => loadPositionPrice());
       refreshMoexPositionPriceBtn.addEventListener('click', () => loadMoexPositionPrice());
 
-      signalFilter.addEventListener('change', () => { signalFilterValue = signalFilter.value; currentPage = 1; renderSignalsTable(); });
-      pairFilter.addEventListener('change', () => { pairFilterValue = pairFilter.value; currentPage = 1; renderSignalsTable(); });
-      periodFilter.addEventListener('change', () => { periodFilterValue = periodFilter.value; currentPage = 1; renderSignalsTable(); });
-      tradePairFilter.addEventListener('change', () => { tradePairFilterValue = tradePairFilter.value; renderTradesTable(); });
-      tradePeriodFilter.addEventListener('change', () => { tradePeriodFilterValue = tradePeriodFilter.value; renderTradesTable(); });
+      signalFilter.addEventListener('change', () => {
+        signalFilterValue = signalFilter.value;
+        currentPage = 1;
+        renderSignalsTable();
+      });
+
+      pairFilter.addEventListener('change', () => {
+        pairFilterValue = pairFilter.value;
+        currentPage = 1;
+        renderSignalsTable();
+      });
+
+      periodFilter.addEventListener('change', () => {
+        periodFilterValue = periodFilter.value;
+        currentPage = 1;
+        renderSignalsTable();
+      });
+
+      tradePairFilter.addEventListener('change', () => {
+        tradePairFilterValue = tradePairFilter.value;
+        renderTradesTable();
+      });
+
+      tradePeriodFilter.addEventListener('change', () => {
+        tradePeriodFilterValue = tradePeriodFilter.value;
+        renderTradesTable();
+      });
 
       prevPageBtn.addEventListener('click', () => {
         if (currentPage > 1) {
