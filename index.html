@@ -141,6 +141,11 @@
         <div class="card-header">
           <h2 id="bots-table-title" class="card-title">Торговые боты</h2>
         </div>
+
+        <div class="card-actions">
+          <button class="primary-btn equal-btn" id="refreshBotsPositionsBtn">Обновить</button>
+        </div>
+
         <div class="table-wrap fixed-table">
           <table>
             <thead>
@@ -239,7 +244,7 @@
             class="ghost-btn equal-btn readonly-field"
             value="-"
             readonly
-            aria-label="Текущая цена открытой позиции Crypto Imp"
+            aria-label="Текущая цена открытой позиции Crypto"
           />
           <button class="primary-btn equal-btn" id="refreshPositionPriceBtn">Crypto</button>
 
@@ -285,6 +290,7 @@
       const root = document.documentElement;
       const themeBtn = document.querySelector('[data-theme-toggle]');
       const refreshSignalsBtn = document.getElementById('refreshSignalsBtn');
+      const refreshBotsPositionsBtn = document.getElementById('refreshBotsPositionsBtn');
       const signalFilter = document.getElementById('signalFilter');
       const pairFilter = document.getElementById('pairFilter');
       const periodFilter = document.getElementById('periodFilter');
@@ -307,6 +313,7 @@
       let signalsState = [];
       let positionsState = [];
       let currentBotId = null;
+      let botPositionMap = {};
       let currentPage = 1;
       const pageSize = 5;
       let signalFilterValue = 'all';
@@ -389,21 +396,77 @@
         return '';
       }
 
-      // Проверяем, есть ли у конкретного бота открытая позиция
-      function hasOpenPositionForBot(botId) {
-        return positionsState.some((position) => {
-          const positionBotId = position.id_bot ?? position.bot_id ?? position.idBot ?? null;
+      // Универсальная проверка наличия позиции:
+      // если webhook вернул action === "hold", считаем что позиция открыта
+      async function checkBotPositionByWebhook(url) {
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
 
-          const isSameBot = String(positionBotId) === String(botId);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-          const isOpenByClosedAt = !position.closed_at;
-          const isOpenByStatus = String(position.status ?? '').toLowerCase() !== 'closed';
+          const json = await res.json();
+          const items = normalizeResponse(json);
+          const item = items[0] || {};
+          const action = String(item.action || '').toLowerCase();
 
-          return isSameBot && isOpenByClosedAt && isOpenByStatus;
-        });
+          return action === 'hold';
+        } catch (error) {
+          console.error('checkBotPositionByWebhook error:', error);
+          return false;
+        }
       }
 
-      // Рендер таблицы ботов
+      // Возвращаем webhook для проверки позиции по id бота
+      function getPositionWebhookByBotId(botId) {
+        const id = Number(botId);
+
+        if (id === 1) return 'https://n8n.kino-test.ru/webhook/check_position';
+        if (id === 2) return 'https://n8n.kino-test.ru/webhook/check_position_moex';
+
+        return null;
+      }
+
+      // Обновляем наличие позиции для всех ботов из таблицы
+      async function refreshBotsPositions() {
+        botsState.forEach((bot) => {
+          botPositionMap[bot.id_bot] = null;
+        });
+        renderBotsTable();
+
+        try {
+          const results = await Promise.all(
+            botsState.map(async (bot) => {
+              const webhookUrl = getPositionWebhookByBotId(bot.id_bot);
+
+              if (!webhookUrl) {
+                return { botId: bot.id_bot, hasPosition: false };
+              }
+
+              const hasPosition = await checkBotPositionByWebhook(webhookUrl);
+              return { botId: bot.id_bot, hasPosition };
+            })
+          );
+
+          results.forEach(({ botId, hasPosition }) => {
+            botPositionMap[botId] = hasPosition;
+          });
+
+          renderBotsTable();
+        } catch (error) {
+          console.error('refreshBotsPositions error:', error);
+          renderBotsTable();
+        }
+      }
+
+      function getBotPositionLabel(botId) {
+        const value = botPositionMap[botId];
+        if (value === null || value === undefined) return 'Проверка...';
+        return value ? 'Да' : 'Нет';
+      }
+
       function renderBotsTable() {
         if (!botsState.length) {
           botsTableBody.innerHTML = `<tr><td colspan="5">Боты не найдены</td></tr>`;
@@ -413,14 +476,11 @@
         botsTableBody.innerHTML = botsState.map((bot) => {
           const active = String(bot.id_bot) === String(currentBotId);
 
-          // Если у выбранного бота есть открытая позиция, показываем "Да", иначе "Нет"
-          const hasOpenPosition = hasOpenPositionForBot(bot.id_bot);
-
           return `
             <tr data-bot-id="${bot.id_bot}" class="${active ? 'active' : ''}">
               <td><strong>${bot.name_bot ?? '-'}</strong></td>
               <td>${formatDate(bot.date_start)}</td>
-              <td>${hasOpenPosition ? 'Да' : 'Нет'}</td>
+              <td>${getBotPositionLabel(bot.id_bot)}</td>
               <td>${bot.market ?? '-'}</td>
               <td><span class="status ${statusClass(bot.status)}">${statusLabel(bot.status)}</span></td>
             </tr>
@@ -545,15 +605,20 @@
           const json = await res.json();
           const items = normalizeResponse(json);
           const item = items[0] || {};
+          const action = String(item.action || '').toLowerCase();
 
-          moexPositionPriceInput.value =
-            item.currentPrice != null
-              ? formatNumber(item.currentPrice, 8)
-              : item.price != null
-                ? formatNumber(item.price, 8)
-                : item.close_price != null
-                  ? formatNumber(item.close_price, 8)
-                  : '-';
+          if (action === 'hold') {
+            moexPositionPriceInput.value =
+              item.currentPrice != null
+                ? formatNumber(item.currentPrice, 8)
+                : item.price != null
+                  ? formatNumber(item.price, 8)
+                  : item.close_price != null
+                    ? formatNumber(item.close_price, 8)
+                    : '-';
+          } else {
+            moexPositionPriceInput.value = '-';
+          }
         } catch (error) {
           console.error('loadMoexPositionPrice error:', error);
           moexPositionPriceInput.value = 'Ошибка';
@@ -563,11 +628,7 @@
       function selectBot(botId) {
         currentBotId = botId;
         currentPage = 1;
-
-        // Сначала подсвечиваем выбранного бота
         renderBotsTable();
-
-        // Обновляем зависимые блоки
         renderBotDetails(botsState.find((b) => String(b.id_bot) === String(botId)));
         loadSignals(botId);
         loadPositions(botId);
@@ -577,6 +638,7 @@
 
       async function loadBots() {
         botsTableBody.innerHTML = `<tr><td colspan="5">Загрузка...</td></tr>`;
+
         try {
           const res = await fetch('https://n8n.kino-test.ru/webhook/get_bots', {
             method: 'POST',
@@ -593,6 +655,8 @@
             return;
           }
 
+          renderBotsTable();
+          await refreshBotsPositions();
           selectBot(botsState[0].id_bot);
         } catch (error) {
           console.error('loadBots error:', error);
@@ -651,10 +715,6 @@
 
           syncTradePairFilterOptions();
           renderTradesTable();
-
-          // После загрузки позиций заново рисуем таблицу ботов,
-          // чтобы колонка "Позиция" обновилась
-          renderBotsTable();
         } catch (error) {
           console.error('loadPositions error:', error);
           tradeLogBody.innerHTML = `<tr><td colspan="15">Ошибка загрузки торговли</td></tr>`;
@@ -669,6 +729,7 @@
         applyThemeLabel();
       });
 
+      refreshBotsPositionsBtn.addEventListener('click', () => refreshBotsPositions());
       refreshSignalsBtn.addEventListener('click', () => loadSignals(currentBotId));
       refreshTradesBtn.addEventListener('click', () => loadPositions(currentBotId));
       refreshPositionPriceBtn.addEventListener('click', () => loadPositionPrice());
