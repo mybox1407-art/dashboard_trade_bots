@@ -493,7 +493,7 @@
       async function loadMoexPositionPrice() {
         moexPositionPriceInput.value = 'Загрузка...';
         try {
-          const res = await fetch('http://trade_bot_tbank:3011/position/check-close', {
+          const res = await fetch('https://n8n.kino-test.ru/webhook/check_position_moex', {
             method: 'GET',
             headers: { 'Accept': 'application/json' }
           });
