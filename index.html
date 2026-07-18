@@ -401,7 +401,7 @@
       async function checkBotPositionByWebhook(url) {
         try {
           const res = await fetch(url, {
-            method: 'GET',
+            method: 'POST',
             headers: { 'Accept': 'application/json' }
           });
 
